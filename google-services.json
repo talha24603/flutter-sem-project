@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "203730179506",
+    "project_id": "cuicomplaint",
+    "storage_bucket": "cuicomplaint.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:203730179506:android:0d16203a860e4de72a00ab",
+        "android_client_info": {
+          "package_name": "dev.jeux.cuicomplaint"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyABKyZ1a3b0TuWIx6S_vauGY9AKYHQtP_o"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
