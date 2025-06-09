@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
 
 class BaseCategoryScreen extends StatefulWidget {
   final String category;
@@ -19,9 +20,12 @@ class BaseCategoryScreen extends StatefulWidget {
 class _BaseCategoryScreenState extends State<BaseCategoryScreen> {
   bool _isLoading = true;
   List<Map<String, dynamic>> _complaints = [];
-  String _sortBy = 'date'; // Default sort by date
+  List<Map<String, dynamic>> _filteredComplaints = [];
+  String _sortBy = 'timestamp'; // Default sort by timestamp
   bool _sortAscending = false; // Default descending (newest first)
   String _filterStatus = 'All'; // Default show all statuses
+  String? _errorMessage;
+  bool _useSimpleQuery = false;
 
   @override
   void initState() {
@@ -29,99 +33,105 @@ class _BaseCategoryScreenState extends State<BaseCategoryScreen> {
     _loadComplaints();
   }
 
-  // This would be replaced with actual data fetching from Firebase
+  // Simple query that only filters by category - no complex indexes needed
   Future<void> _loadComplaints() async {
-    // Simulate network delay
-    await Future.delayed(const Duration(seconds: 1));
+    setState(() {
+      _isLoading = true;
+      _errorMessage = null;
+    });
 
-    // Mock data for complaints in this category
-    final List<Map<String, dynamic>> mockComplaints = [
-      {
-        'id': 'C-1001',
-        'title': 'Broken Water Fountain',
-        'category': widget.category,
-        'location': 'Building A, 2nd Floor',
-        'status': 'Pending',
-        'date': '2023-06-15',
-        'timestamp': DateTime.now().subtract(const Duration(days: 2)),
-        'urgency': 'Medium',
-        'hasImage': true,
-        'imageUrl': 'https://via.placeholder.com/60x60',
-        'submittedBy': 'John Doe',
-        'description': 'The water fountain on the 2nd floor is not working properly. Water pressure is very low.',
-      },
-      {
-        'id': 'C-1002',
-        'title': 'Flickering Lights in Classroom',
-        'category': widget.category,
-        'location': 'Science Block, Room 204',
-        'status': 'In Progress',
-        'date': '2023-06-14',
-        'timestamp': DateTime.now().subtract(const Duration(days: 3)),
-        'urgency': 'Low',
-        'hasImage': true,
-        'imageUrl': 'https://via.placeholder.com/60x60',
-        'submittedBy': 'Jane Smith',
-        'description': 'The lights in Room 204 are flickering constantly, making it difficult to concentrate during lectures.',
-      },
-      {
-        'id': 'C-1003',
-        'title': 'Broken Chair in Auditorium',
-        'category': widget.category,
-        'location': 'Main Auditorium, Row C',
-        'status': 'Resolved',
-        'date': '2023-06-16',
-        'timestamp': DateTime.now().subtract(const Duration(days: 1)),
-        'urgency': 'High',
-        'hasImage': false,
-        'submittedBy': 'Robert Johnson',
-        'description': 'A chair in Row C of the main auditorium is broken and poses a safety hazard.',
-      },
-      {
-        'id': 'C-1004',
-        'title': 'AC Not Working',
-        'category': widget.category,
-        'location': 'Computer Lab 3',
-        'status': 'In Progress',
-        'date': '2023-06-13',
-        'timestamp': DateTime.now().subtract(const Duration(days: 4)),
-        'urgency': 'High',
-        'hasImage': false,
-        'submittedBy': 'Emily Davis',
-        'description': 'The air conditioning in Computer Lab 3 is not working. The room is too hot for students to work effectively.',
-      },
-      {
-        'id': 'C-1005',
-        'title': 'Leaking Roof',
-        'category': widget.category,
-        'location': 'Library, East Wing',
-        'status': 'Pending',
-        'date': '2023-06-12',
-        'timestamp': DateTime.now().subtract(const Duration(days: 5)),
-        'urgency': 'Critical',
-        'hasImage': true,
-        'imageUrl': 'https://via.placeholder.com/60x60',
-        'submittedBy': 'Michael Brown',
-        'description': 'The roof in the east wing of the library is leaking. Water is dripping onto bookshelves and damaging books.',
-      },
-    ];
+    try {
+      // Simple query that only filters by category - no complex indexes needed
+      final QuerySnapshot snapshot = await FirebaseFirestore.instance
+          .collection('complaints')
+          .where('category', isEqualTo: widget.category)
+          .get();
 
-    // Sort and filter the complaints
-    _sortAndFilterComplaints(mockComplaints);
+      final List<Map<String, dynamic>> complaints = [];
+
+      for (var doc in snapshot.docs) {
+        final data = doc.data() as Map<String, dynamic>;
+
+        // Add document ID for tracking
+        data['id'] = doc.id;
+
+        // Convert timestamp to readable date
+        if (data['timestamp'] != null) {
+          final timestamp = data['timestamp'] as Timestamp;
+          data['date'] = _formatDate(timestamp.toDate());
+          data['timestampDate'] = timestamp.toDate();
+        } else if (data['createdAt'] != null) {
+          final timestamp = data['createdAt'] as Timestamp;
+          data['date'] = _formatDate(timestamp.toDate());
+          data['timestampDate'] = timestamp.toDate();
+        } else {
+          data['date'] = 'Unknown';
+          data['timestampDate'] = DateTime.now();
+        }
+
+        // Convert urgency from number to string if needed
+        if (data['urgency'] is int) {
+          data['urgency'] = _getUrgencyString(data['urgency']);
+        }
+
+        // Ensure all required fields exist with defaults
+        data['title'] = data['title'] ?? 'Untitled Complaint';
+        data['location'] = data['location'] ?? 'Unknown Location';
+        data['status'] = data['status'] ?? 'Pending';
+        data['urgency'] = data['urgency'] ?? 'Medium';
+        data['submittedBy'] = data['submittedBy'] ?? 'Anonymous';
+        data['description'] = data['description'] ?? 'No description provided';
+        data['hasImage'] = data['imageUrl'] != null && data['imageUrl'].toString().isNotEmpty;
+
+        complaints.add(data);
+      }
+
+      setState(() {
+        _complaints = complaints;
+        // Apply filtering and sorting in memory
+        _applyFiltersAndSort();
+        _isLoading = false;
+      });
+
+    } catch (e) {
+      setState(() {
+        _isLoading = false;
+        _errorMessage = 'Error loading complaints: ${e.toString()}';
+      });
+
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Error loading complaints: ${e.toString()}'),
+            backgroundColor: Colors.red,
+            duration: const Duration(seconds: 5),
+            action: SnackBarAction(
+              label: 'Retry',
+              textColor: Colors.white,
+              onPressed: _loadComplaints,
+            ),
+          ),
+        );
+      }
+    }
   }
 
-  void _sortAndFilterComplaints(List<Map<String, dynamic>> complaints) {
-    // Filter by status if not 'All'
+  // Apply filters and sorting in memory instead of in the database
+  void _applyFiltersAndSort() {
+    List<Map<String, dynamic>> filtered = List.from(_complaints);
+
+    // Apply status filter if not 'All'
     if (_filterStatus != 'All') {
-      complaints = complaints.where((c) => c['status'] == _filterStatus).toList();
+      filtered = filtered.where((c) => c['status'] == _filterStatus).toList();
     }
 
     // Sort the complaints
-    complaints.sort((a, b) {
+    filtered.sort((a, b) {
       switch (_sortBy) {
-        case 'date':
-          final aDate = a['timestamp'] as DateTime;
-          final bDate = b['timestamp'] as DateTime;
+        case 'timestamp':
+        case 'createdAt':
+          final aDate = a['timestampDate'] as DateTime;
+          final bDate = b['timestampDate'] as DateTime;
           return _sortAscending ? aDate.compareTo(bDate) : bDate.compareTo(aDate);
         case 'urgency':
           final urgencyOrder = {'Low': 0, 'Medium': 1, 'High': 2, 'Critical': 3};
@@ -133,15 +143,41 @@ class _BaseCategoryScreenState extends State<BaseCategoryScreen> {
           final aStatus = statusOrder[a['status']] ?? 0;
           final bStatus = statusOrder[b['status']] ?? 0;
           return _sortAscending ? aStatus.compareTo(bStatus) : bStatus.compareTo(aStatus);
+        case 'title':
+          return _sortAscending
+              ? a['title'].toString().compareTo(b['title'].toString())
+              : b['title'].toString().compareTo(a['title'].toString());
         default:
           return 0;
       }
     });
 
     setState(() {
-      _complaints = complaints;
-      _isLoading = false;
+      _filteredComplaints = filtered;
     });
+  }
+
+  String _formatDate(DateTime date) {
+    return '${date.day}/${date.month}/${date.year}';
+  }
+
+  String _getUrgencyString(int urgencyLevel) {
+    switch (urgencyLevel) {
+      case 1:
+        return 'Low';
+      case 2:
+        return 'Medium';
+      case 3:
+        return 'High';
+      case 4:
+        return 'Critical';
+      default:
+        return 'Medium';
+    }
+  }
+
+  Future<void> _refreshComplaints() async {
+    await _loadComplaints();
   }
 
   Color _getStatusColor(String status) {
@@ -186,6 +222,10 @@ class _BaseCategoryScreenState extends State<BaseCategoryScreen> {
         elevation: 0,
         actions: [
           IconButton(
+            icon: const Icon(Icons.refresh),
+            onPressed: _refreshComplaints,
+          ),
+          IconButton(
             icon: const Icon(Icons.filter_list),
             onPressed: _showFilterDialog,
           ),
@@ -195,101 +235,114 @@ class _BaseCategoryScreenState extends State<BaseCategoryScreen> {
           ),
         ],
       ),
-      body: SafeArea(
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            // Category Header
-            Container(
-              width: double.infinity,
-              padding: const EdgeInsets.all(20),
-              decoration: BoxDecoration(
-                color: widget.categoryColor,
-                borderRadius: const BorderRadius.only(
-                  bottomLeft: Radius.circular(30),
-                  bottomRight: Radius.circular(30),
-                ),
-              ),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Row(
-                    children: [
-                      Container(
-                        padding: const EdgeInsets.all(12),
-                        decoration: BoxDecoration(
-                          color: Colors.white.withOpacity(0.2),
-                          borderRadius: BorderRadius.circular(12),
-                        ),
-                        child: Icon(
-                          widget.categoryIcon,
-                          color: Colors.white,
-                          size: 28,
-                        ),
-                      ),
-                      const SizedBox(width: 16),
-                      Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(
-                            widget.category,
-                            style: const TextStyle(
-                              fontSize: 22,
-                              fontWeight: FontWeight.bold,
-                              color: Colors.white,
-                            ),
-                          ),
-                          const SizedBox(height: 4),
-                          Text(
-                            '${_complaints.length} complaints',
-                            style: const TextStyle(
-                              fontSize: 16,
-                              color: Colors.white70,
-                            ),
-                          ),
-                        ],
-                      ),
-                    ],
+      body: RefreshIndicator(
+        onRefresh: _refreshComplaints,
+        child: SafeArea(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              // Category Header
+              Container(
+                width: double.infinity,
+                padding: const EdgeInsets.all(20),
+                decoration: BoxDecoration(
+                  color: widget.categoryColor,
+                  borderRadius: const BorderRadius.only(
+                    bottomLeft: Radius.circular(30),
+                    bottomRight: Radius.circular(30),
                   ),
-                  const SizedBox(height: 16),
-
-                  // Status Filters
-                  SingleChildScrollView(
-                    scrollDirection: Axis.horizontal,
-                    child: Row(
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
                       children: [
-                        _buildStatusFilterChip('All'),
-                        _buildStatusFilterChip('Pending'),
-                        _buildStatusFilterChip('In Progress'),
-                        _buildStatusFilterChip('Resolved'),
+                        Container(
+                          padding: const EdgeInsets.all(12),
+                          decoration: BoxDecoration(
+                            color: Colors.white.withOpacity(0.2),
+                            borderRadius: BorderRadius.circular(12),
+                          ),
+                          child: Icon(
+                            widget.categoryIcon,
+                            color: Colors.white,
+                            size: 28,
+                          ),
+                        ),
+                        const SizedBox(width: 16),
+                        Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              widget.category,
+                              style: const TextStyle(
+                                fontSize: 22,
+                                fontWeight: FontWeight.bold,
+                                color: Colors.white,
+                              ),
+                            ),
+                            const SizedBox(height: 4),
+                            Text(
+                              '${_filteredComplaints.length} complaints',
+                              style: const TextStyle(
+                                fontSize: 16,
+                                color: Colors.white70,
+                              ),
+                            ),
+                          ],
+                        ),
                       ],
                     ),
-                  ),
-                ],
-              ),
-            ),
+                    const SizedBox(height: 16),
 
-            // Complaints List
-            Expanded(
-              child: _isLoading
-                  ? const Center(child: CircularProgressIndicator())
-                  : _complaints.isEmpty
-                  ? _buildEmptyState()
-                  : ListView.builder(
-                padding: const EdgeInsets.all(16),
-                itemCount: _complaints.length,
-                itemBuilder: (context, index) {
-                  final complaint = _complaints[index];
-                  return _buildComplaintCard(complaint);
-                },
+                    // Status Filters
+                    SingleChildScrollView(
+                      scrollDirection: Axis.horizontal,
+                      child: Row(
+                        children: [
+                          _buildStatusFilterChip('All'),
+                          _buildStatusFilterChip('Pending'),
+                          _buildStatusFilterChip('In Progress'),
+                          _buildStatusFilterChip('Resolved'),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
               ),
-            ),
-          ],
+
+              // Complaints List
+              Expanded(
+                child: _isLoading
+                    ? const Center(child: CircularProgressIndicator())
+                    : _errorMessage != null
+                    ? _buildErrorState()
+                    : _filteredComplaints.isEmpty
+                    ? _buildEmptyState()
+                    : ListView.builder(
+                  padding: const EdgeInsets.all(16),
+                  itemCount: _filteredComplaints.length,
+                  itemBuilder: (context, index) {
+                    final complaint = _filteredComplaints[index];
+                    return _buildComplaintCard(complaint);
+                  },
+                ),
+              ),
+            ],
+          ),
         ),
       ),
       floatingActionButton: FloatingActionButton(
         onPressed: () {
-          // Navigate to complaint form
+          // Navigate to complaint form for this specific category
+          // Navigator.push(
+          //   context,
+          //   MaterialPageRoute(
+          //     builder: (context) => ComplaintForm(
+          //       preSelectedCategory: widget.category,
+          //     ),
+          //   ),
+          // );
         },
         backgroundColor: widget.categoryColor,
         foregroundColor: Colors.white,
@@ -305,9 +358,9 @@ class _BaseCategoryScreenState extends State<BaseCategoryScreen> {
       onTap: () {
         setState(() {
           _filterStatus = status;
-          _isLoading = true;
+          // Apply filters in memory
+          _applyFiltersAndSort();
         });
-        _loadComplaints();
       },
       child: Container(
         margin: const EdgeInsets.only(right: 10),
@@ -323,6 +376,52 @@ class _BaseCategoryScreenState extends State<BaseCategoryScreen> {
             fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
           ),
         ),
+      ),
+    );
+  }
+
+  Widget _buildErrorState() {
+    return Center(
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          Icon(
+            Icons.error_outline,
+            size: 80,
+            color: Colors.red[300],
+          ),
+          const SizedBox(height: 16),
+          Text(
+            'Error Loading Complaints',
+            style: TextStyle(
+              fontSize: 18,
+              fontWeight: FontWeight.bold,
+              color: Colors.grey[600],
+            ),
+          ),
+          const SizedBox(height: 8),
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 32),
+            child: Text(
+              _errorMessage ?? 'An unknown error occurred',
+              style: TextStyle(
+                fontSize: 14,
+                color: Colors.grey[600],
+              ),
+              textAlign: TextAlign.center,
+            ),
+          ),
+          const SizedBox(height: 16),
+          ElevatedButton.icon(
+            onPressed: _loadComplaints,
+            icon: const Icon(Icons.refresh),
+            label: const Text('Retry'),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: widget.categoryColor,
+              foregroundColor: Colors.white,
+            ),
+          ),
+        ],
       ),
     );
   }
@@ -357,6 +456,16 @@ class _BaseCategoryScreenState extends State<BaseCategoryScreen> {
             ),
             textAlign: TextAlign.center,
           ),
+          const SizedBox(height: 16),
+          ElevatedButton.icon(
+            onPressed: _loadComplaints,
+            icon: const Icon(Icons.refresh),
+            label: const Text('Refresh'),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: widget.categoryColor,
+              foregroundColor: Colors.white,
+            ),
+          ),
         ],
       ),
     );
@@ -378,7 +487,6 @@ class _BaseCategoryScreenState extends State<BaseCategoryScreen> {
       ),
       child: InkWell(
         onTap: () {
-          // Navigate to complaint details
           _showComplaintDetails(complaint);
         },
         borderRadius: BorderRadius.circular(12),
@@ -515,9 +623,10 @@ class _BaseCategoryScreenState extends State<BaseCategoryScreen> {
           content: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              _buildSortOption('date', 'Date'),
+              _buildSortOption('timestamp', 'Date'),
               _buildSortOption('urgency', 'Urgency'),
               _buildSortOption('status', 'Status'),
+              _buildSortOption('title', 'Title'),
             ],
           ),
           actions: [
@@ -558,10 +667,11 @@ class _BaseCategoryScreenState extends State<BaseCategoryScreen> {
               _sortAscending = !_sortAscending;
             } else {
               _sortBy = newValue;
+              _sortAscending = false; // Default to descending for new sort
             }
-            _isLoading = true;
+            // Apply filters in memory
+            _applyFiltersAndSort();
           });
-          _loadComplaints();
         }
       },
     );
@@ -608,9 +718,9 @@ class _BaseCategoryScreenState extends State<BaseCategoryScreen> {
         if (newValue != null) {
           setState(() {
             _filterStatus = newValue;
-            _isLoading = true;
+            // Apply filters in memory
+            _applyFiltersAndSort();
           });
-          _loadComplaints();
         }
       },
     );
@@ -755,8 +865,13 @@ class _BaseCategoryScreenState extends State<BaseCategoryScreen> {
                   Expanded(
                     child: OutlinedButton.icon(
                       onPressed: () {
-                        // Share complaint
+                        // Share complaint functionality
                         Navigator.pop(context);
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          const SnackBar(
+                            content: Text('Share functionality coming soon!'),
+                          ),
+                        );
                       },
                       icon: const Icon(Icons.share),
                       label: const Text('Share'),
@@ -771,8 +886,13 @@ class _BaseCategoryScreenState extends State<BaseCategoryScreen> {
                   Expanded(
                     child: ElevatedButton.icon(
                       onPressed: () {
-                        // Track complaint
+                        // Track complaint functionality
                         Navigator.pop(context);
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          const SnackBar(
+                            content: Text('Tracking functionality coming soon!'),
+                          ),
+                        );
                       },
                       icon: const Icon(Icons.track_changes),
                       label: const Text('Track'),

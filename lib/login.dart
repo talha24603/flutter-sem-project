@@ -1,34 +1,13 @@
 import 'package:flutter/material.dart';
+import 'package:firebase_auth/firebase_auth.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:semester_project/forget_password.dart';
+import 'package:semester_project/services/auth_service.dart';
 import 'package:semester_project/sign_up.dart';
 import 'complaint_form.dart';
 import 'admin_dashboard.dart';
-
-void main() {
-  runApp(const LoginApp());
-}
-
-class LoginApp extends StatelessWidget {
-  const LoginApp({Key? key}) : super(key: key);
-
-  @override
-  Widget build(BuildContext context) {
-    return MaterialApp(
-      title: 'University Login',
-      debugShowCheckedModeBanner: false,
-      theme: ThemeData(
-        primaryColor: const Color(0xFF1A237E),
-        colorScheme: ColorScheme.fromSeed(
-          seedColor: const Color(0xFF1A237E),
-          primary: const Color(0xFF1A237E),
-        ),
-        fontFamily: 'Roboto',
-        useMaterial3: true,
-      ),
-      home: const LoginPage(),
-    );
-  }
-}
+import 'auth_wrapper.dart';
+import 'package:semester_project/services/shared_preferences_service.dart';
 
 class LoginPage extends StatefulWidget {
   const LoginPage({Key? key}) : super(key: key);
@@ -199,6 +178,7 @@ class _StudentLoginFormState extends State<StudentLoginForm> {
   final _formKey = GlobalKey<FormState>();
   final _studentIdController = TextEditingController();
   final _passwordController = TextEditingController();
+  final AuthService _authService = AuthService();
   bool _obscureText = true;
   bool _rememberMe = false;
   bool _isLoading = false;
@@ -219,20 +199,74 @@ class _StudentLoginFormState extends State<StudentLoginForm> {
   Future<void> _login() async {
     if (_formKey.currentState!.validate()) {
       setState(() => _isLoading = true);
-      await Future.delayed(const Duration(seconds: 2));
-      setState(() => _isLoading = false);
 
-      if (mounted) {
-        // replace the SnackBar with navigation:
-        Navigator.of(context).pushReplacement(
-          MaterialPageRoute(
-            builder: (_) => const ComplaintForm(),
-          ),
+      try {
+        // First, try to find user by student ID in Firestore
+        QuerySnapshot querySnapshot = await FirebaseFirestore.instance
+            .collection('users')
+            .where('studentId', isEqualTo: _studentIdController.text.trim())
+            .where('userType', isEqualTo: 'student')
+            .limit(1)
+            .get();
+
+        if (querySnapshot.docs.isEmpty) {
+          throw 'Student ID not found. Please check your student ID or register first.';
+        }
+
+        // Get the user's email from Firestore
+        Map<String, dynamic> userData = querySnapshot.docs.first.data() as Map<String, dynamic>;
+        String email = userData['email'] ?? '';
+
+        if (email.isEmpty) {
+          throw 'Invalid student record. Please contact support.';
+        }
+
+        // Sign in with Firebase Auth using email and password
+        UserCredential? result = await _authService.signInWithEmailAndPassword(
+          email: email,
+          password: _passwordController.text,
         );
+
+        if (result != null) {
+          // Check if email is verified
+          if (!result.user!.emailVerified) {
+            await result.user!.sendEmailVerification();
+            throw 'Please verify your email address. A verification email has been sent.';
+          }
+
+          // Navigation will be handled by AuthWrapper automatically
+          // Just show success message and let AuthWrapper handle the rest
+          if (mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(
+                content: Text('Login successful!'),
+                backgroundColor: Colors.green,
+              ),
+            );
+
+            // Navigate to AuthWrapper which will determine the correct page
+            Navigator.of(context).pushAndRemoveUntil(
+              MaterialPageRoute(builder: (_) => const AuthWrapper()),
+                  (route) => false,
+            );
+          }
+        }
+      } catch (e) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text(e.toString()),
+              backgroundColor: Colors.red,
+            ),
+          );
+        }
+      } finally {
+        if (mounted) {
+          setState(() => _isLoading = false);
+        }
       }
     }
   }
-
 
   @override
   Widget build(BuildContext context) {
@@ -319,7 +353,7 @@ class _StudentLoginFormState extends State<StudentLoginForm> {
                 onPressed: () {
                   Navigator.of(context).push(
                     MaterialPageRoute(
-                      builder: (_) => const ForgotPasswordScreen(),
+                      builder: (_) => ForgotPasswordScreen(),
                     ),
                   );
                 },
@@ -405,15 +439,16 @@ class AdminLoginForm extends StatefulWidget {
 
 class _AdminLoginFormState extends State<AdminLoginForm> {
   final _formKey = GlobalKey<FormState>();
-  final _usernameController = TextEditingController();
+  final _emailController = TextEditingController();
   final _passwordController = TextEditingController();
+  final AuthService _authService = AuthService();
   bool _obscureText = true;
   bool _rememberMe = false;
   bool _isLoading = false;
 
   @override
   void dispose() {
-    _usernameController.dispose();
+    _emailController.dispose();
     _passwordController.dispose();
     super.dispose();
   }
@@ -427,15 +462,69 @@ class _AdminLoginFormState extends State<AdminLoginForm> {
   Future<void> _login() async {
     if (_formKey.currentState!.validate()) {
       setState(() => _isLoading = true);
-      await Future.delayed(const Duration(seconds: 2));
-      setState(() => _isLoading = false);
 
-      if (mounted) {
-        Navigator.of(context).pushReplacement(
-          MaterialPageRoute(
-            builder: (_) => const AdminDashboard(),
-          ),
+      try {
+        // Sign in with Firebase Auth using email and password
+        UserCredential? result = await _authService.signInWithEmailAndPassword(
+          email: _emailController.text.trim(),
+          password: _passwordController.text,
         );
+
+        if (result != null) {
+          // Check if email is verified
+          if (!result.user!.emailVerified) {
+            await result.user!.sendEmailVerification();
+            throw 'Please verify your email address. A verification email has been sent.';
+          }
+
+          // For admin login, we'll check if this is the admin email
+          List<String> adminEmails = [
+            'admin@comsats.edu.pk',
+            'director@comsats.edu.pk',
+            'it.admin@comsats.edu.pk',
+          ];
+
+          if (adminEmails.contains(_emailController.text.trim())) {
+            // Save admin login state
+            await SharedPreferencesService.setLoginState(
+              isLoggedIn: true,
+              userType: 'admin',
+              userId: result.user!.uid,
+              userEmail: _emailController.text.trim(),
+              userName: 'Admin User',
+            );
+
+            if (mounted) {
+              ScaffoldMessenger.of(context).showSnackBar(
+                const SnackBar(
+                  content: Text('Admin login successful!'),
+                  backgroundColor: Colors.green,
+                ),
+              );
+
+              // Navigate to AuthWrapper which will determine the correct page
+              Navigator.of(context).pushAndRemoveUntil(
+                MaterialPageRoute(builder: (_) => const AuthWrapper()),
+                    (route) => false,
+              );
+            }
+          } else {
+            throw 'You do not have admin privileges. Please contact the administrator.';
+          }
+        }
+      } catch (e) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text(e.toString()),
+              backgroundColor: Colors.red,
+            ),
+          );
+        }
+      } finally {
+        if (mounted) {
+          setState(() => _isLoading = false);
+        }
       }
     }
   }
@@ -447,13 +536,14 @@ class _AdminLoginFormState extends State<AdminLoginForm> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          // Username Field
+          // Email Field
           TextFormField(
-            controller: _usernameController,
+            controller: _emailController,
+            keyboardType: TextInputType.emailAddress,
             decoration: InputDecoration(
-              labelText: 'Username or Email',
-              hintText: 'Enter your username or email',
-              prefixIcon: const Icon(Icons.person, color: Color(0xFF1A237E)),
+              labelText: 'Email Address',
+              hintText: 'Enter admin email address',
+              prefixIcon: const Icon(Icons.email, color: Color(0xFF1A237E)),
               border: OutlineInputBorder(
                 borderRadius: BorderRadius.circular(10),
               ),
@@ -464,7 +554,10 @@ class _AdminLoginFormState extends State<AdminLoginForm> {
             ),
             validator: (value) {
               if (value == null || value.isEmpty) {
-                return 'Please enter your username or email';
+                return 'Please enter your email address';
+              }
+              if (!RegExp(r'^[\w-\.]+@([\w-]+\.)+[\w-]{2,4}$').hasMatch(value)) {
+                return 'Please enter a valid email address';
               }
               return null;
             },
@@ -522,7 +615,13 @@ class _AdminLoginFormState extends State<AdminLoginForm> {
                 ],
               ),
               TextButton(
-                onPressed: () {},
+                onPressed: () {
+                  Navigator.of(context).push(
+                    MaterialPageRoute(
+                      builder: (_) => ForgotPasswordScreen(),
+                    ),
+                  );
+                },
                 child: const Text(
                   'Forgot Password?',
                   style: TextStyle(

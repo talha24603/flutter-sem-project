@@ -1,0 +1,109 @@
+import 'package:flutter/material.dart';
+import 'package:flutter/foundation.dart';
+
+class TestPage extends StatelessWidget {
+  const TestPage({Key? key}) : super(key: key);
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text('App Test'),
+        backgroundColor: const Color(0xFF005D99),
+        foregroundColor: Colors.white,
+      ),
+      body: Center(
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            const Icon(
+              Icons.check_circle,
+              size: 100,
+              color: Colors.green,
+            ),
+            const SizedBox(height: 20),
+            const Text(
+              'App is working!',
+              style: TextStyle(
+                fontSize: 24,
+                fontWeight: FontWeight.bold,
+              ),
+            ),
+            const SizedBox(height: 20),
+            Text(
+              'Platform: ${kIsWeb ? 'Web' : 'Mobile'}',
+              style: const TextStyle(fontSize: 16),
+            ),
+            const SizedBox(height: 40),
+            ElevatedButton(
+              onPressed: () {
+                Navigator.of(context).pushReplacement(
+                  MaterialPageRoute(
+                    builder: (_) => const SplashScreen(),
+                  ),
+                );
+              },
+              child: const Text('Go to Splash Screen'),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+// Import this in your main.dart if needed
+class SplashScreen extends StatelessWidget {
+  const SplashScreen({Key? key}) : super(key: key);
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      body: Container(
+        decoration: const BoxDecoration(
+          gradient: LinearGradient(
+            begin: Alignment.topCenter,
+            end: Alignment.bottomCenter,
+            colors: [
+              Color(0xFF005D99),
+              Color(0xFF0077CC),
+            ],
+          ),
+        ),
+        child: const Center(
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Icon(
+                Icons.school,
+                size: 100,
+                color: Colors.white,
+              ),
+              SizedBox(height: 20),
+              Text(
+                'COMSATS University',
+                style: TextStyle(
+                  fontSize: 28,
+                  fontWeight: FontWeight.bold,
+                  color: Colors.white,
+                ),
+              ),
+              SizedBox(height: 10),
+              Text(
+                'Complaint Management System',
+                style: TextStyle(
+                  fontSize: 16,
+                  color: Colors.white70,
+                ),
+              ),
+              SizedBox(height: 40),
+              CircularProgressIndicator(
+                valueColor: AlwaysStoppedAnimation<Color>(Colors.white),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}

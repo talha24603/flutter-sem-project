@@ -95,7 +95,7 @@ class _LandingPageState extends State<LandingPage> {
               onPressed: () {
                 Navigator.push(
                   context,
-                  MaterialPageRoute(builder: (context) => const LoginApp()),
+                  MaterialPageRoute(builder: (context) => const LoginPage()),
                 );
               },
               style: ElevatedButton.styleFrom(
@@ -171,7 +171,7 @@ class _LandingPageState extends State<LandingPage> {
                 Navigator.pop(context);
                 Navigator.push(
                   context,
-                  MaterialPageRoute(builder: (context) => const LoginApp()),
+                  MaterialPageRoute(builder: (context) => const LoginPage()),
                 );
               },
             ),
